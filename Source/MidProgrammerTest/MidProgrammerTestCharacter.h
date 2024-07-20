@@ -12,16 +12,17 @@ class UCameraComponent;
 class UInputMappingContext;
 class UInputAction;
 class UUserWidget;
+class UHealthComponent;
 struct FInputActionValue;
 
 DECLARE_LOG_CATEGORY_EXTERN(LogTemplateCharacter, Log, All);
 
-UCLASS(config=Game)
+UCLASS(config = Game)
 class AMidProgrammerTestCharacter : public ACharacter
 {
 	GENERATED_BODY()
 
-// ---------------------------------------------- Variables ---------------------------------------------- 
+	// ---------------------------------------------- Variables ---------------------------------------------- 
 
 #pragma region Components
 
@@ -33,10 +34,13 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = Camera, meta = (AllowPrivateAccess = "true"))
 	UCameraComponent* FollowCamera;
 
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = Health, meta = (AllowPrivateAccess = "true"))
+	UHealthComponent* HealthComponent;
+
 #pragma endregion
 
 #pragma region Input
-	
+
 protected:
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = Input, meta = (AllowPrivateAccess = "true"))
@@ -50,13 +54,23 @@ protected:
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = Input, meta = (AllowPrivateAccess = "true"))
 	UInputAction* LookAction;
-	
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = Input, meta = (AllowPrivateAccess = "true"))
 	UInputAction* FireAction;
 
 #pragma endregion
 
 #pragma region Explosion
+
+protected:
+
+	void Fire();
+
+	UFUNCTION(Server, Reliable)
+	void ServerFire();
+
+	UFUNCTION(NetMulticast, Reliable)
+	void MulticastSpawnExplosion(FVector spawnLocation);
 
 protected:
 
@@ -69,13 +83,13 @@ protected:
 #pragma region HUD
 
 protected:
-	
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "HUD")
 	TSubclassOf<UUserWidget> HUDWidgetClass;
 
 #pragma endregion
 
-// ---------------------------------------------- Functions ---------------------------------------------- 
+	// ---------------------------------------------- Functions ---------------------------------------------- 
 
 #pragma region General
 
@@ -84,9 +98,9 @@ public:
 	AMidProgrammerTestCharacter();
 
 protected:
-	
+
 	virtual void SetupPlayerInputComponent(class UInputComponent* PlayerInputComponent) override;
-	
+
 	virtual void BeginPlay();
 
 #pragma endregion
@@ -101,6 +115,17 @@ protected:
 
 #pragma endregion
 
+#pragma region Damage
+
+protected:
+
+	virtual float TakeDamage(float DamageAmount, struct FDamageEvent const& DamageEvent, class AController* EventInstigator, AActor* DamageCauser);
+
+	UFUNCTION(Client, Reliable)
+	void ClientDisableInput();
+
+#pragma endregion
+
 #pragma region Getters
 
 public:
@@ -109,7 +134,5 @@ public:
 	FORCEINLINE class UCameraComponent* GetFollowCamera() const { return FollowCamera; }
 
 #pragma endregion
-
-
 };
 

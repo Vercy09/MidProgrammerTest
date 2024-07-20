@@ -10,20 +10,21 @@
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
 #include "InputActionValue.h"
-
+#include "HealthComponent.h"
 #include "Blueprint/UserWidget.h"
+#include <Kismet/GameplayStatics.h>
 
 DEFINE_LOG_CATEGORY(LogTemplateCharacter);
 
 AMidProgrammerTestCharacter::AMidProgrammerTestCharacter()
 {
 	GetCapsuleComponent()->InitCapsuleSize(42.f, 96.0f);
-		
+
 	bUseControllerRotationPitch = false;
 	bUseControllerRotationYaw = false;
 	bUseControllerRotationRoll = false;
 
-	GetCharacterMovement()->bOrientRotationToMovement = true; 
+	GetCharacterMovement()->bOrientRotationToMovement = true;
 	GetCharacterMovement()->RotationRate = FRotator(0.0f, 500.0f, 0.0f);
 
 	GetCharacterMovement()->JumpZVelocity = 700.f;
@@ -35,14 +36,17 @@ AMidProgrammerTestCharacter::AMidProgrammerTestCharacter()
 
 	CameraBoom = CreateDefaultSubobject<USpringArmComponent>(TEXT("CameraBoom"));
 	CameraBoom->SetupAttachment(RootComponent);
-	CameraBoom->TargetArmLength = 400.0f; 
-	CameraBoom->bUsePawnControlRotation = true; 
+	CameraBoom->TargetArmLength = 400.0f;
+	CameraBoom->bUsePawnControlRotation = true;
 
 	FollowCamera = CreateDefaultSubobject<UCameraComponent>(TEXT("FollowCamera"));
 	FollowCamera->SetupAttachment(CameraBoom, USpringArmComponent::SocketName);
-	FollowCamera->bUsePawnControlRotation = false; 
-	
+	FollowCamera->bUsePawnControlRotation = false;
 
+	HealthComponent = CreateDefaultSubobject<UHealthComponent>(TEXT("HealthComponent"));
+	HealthComponent->SetIsReplicated(true);
+
+	SetCanBeDamaged(true);
 }
 
 void AMidProgrammerTestCharacter::BeginPlay()
@@ -65,10 +69,10 @@ void AMidProgrammerTestCharacter::SetupPlayerInputComponent(UInputComponent* Pla
 			Subsystem->AddMappingContext(DefaultMappingContext, 0);
 		}
 	}
-	
+
 	// Set up action bindings
 	if (UEnhancedInputComponent* EnhancedInputComponent = Cast<UEnhancedInputComponent>(PlayerInputComponent)) {
-		
+
 		// Jumping
 		EnhancedInputComponent->BindAction(JumpAction, ETriggerEvent::Started, this, &ACharacter::Jump);
 		EnhancedInputComponent->BindAction(JumpAction, ETriggerEvent::Completed, this, &ACharacter::StopJumping);
@@ -78,6 +82,9 @@ void AMidProgrammerTestCharacter::SetupPlayerInputComponent(UInputComponent* Pla
 
 		// Looking
 		EnhancedInputComponent->BindAction(LookAction, ETriggerEvent::Triggered, this, &AMidProgrammerTestCharacter::Look);
+
+		// Firing
+		EnhancedInputComponent->BindAction(FireAction, ETriggerEvent::Triggered, this, &AMidProgrammerTestCharacter::Fire);
 
 	}
 	else
@@ -101,7 +108,7 @@ void AMidProgrammerTestCharacter::Move(const FInputActionValue& Value)
 
 		// get forward vector
 		const FVector ForwardDirection = FRotationMatrix(YawRotation).GetUnitAxis(EAxis::X);
-	
+
 		// get right vector 
 		const FVector RightDirection = FRotationMatrix(YawRotation).GetUnitAxis(EAxis::Y);
 
@@ -125,3 +132,67 @@ void AMidProgrammerTestCharacter::Look(const FInputActionValue& Value)
 }
 
 #pragma endregion
+
+float AMidProgrammerTestCharacter::TakeDamage(float DamageAmount, FDamageEvent const& DamageEvent, AController* EventInstigator, AActor* DamageCauser)
+{
+	Super::TakeDamage(DamageAmount, DamageEvent, EventInstigator, DamageCauser);
+
+	// Apply damage - server only code
+	float damageTaken = 0.0f;
+	if (HasAuthority() && HealthComponent->GetCurrentHealth() > 0.0f)
+	{
+		damageTaken = HealthComponent->TakeDamage(DamageAmount);
+		UE_LOG(LogTemplateCharacter, Log, TEXT("Took %f damage!"), damageTaken);
+
+		// Check if the player died
+		if (HealthComponent->GetCurrentHealth() <= 0)
+		{
+			UE_LOG(LogTemplateCharacter, Log, TEXT("Character has died! X("));
+			ClientDisableInput();
+		}
+	}
+
+	return damageTaken;
+}
+
+
+void AMidProgrammerTestCharacter::ClientDisableInput_Implementation()
+{
+	if (APlayerController* playerController = Cast<APlayerController>(GetController()))
+	{
+		DisableInput(playerController);
+	}
+}
+
+
+void AMidProgrammerTestCharacter::Fire()
+{
+	if (IsLocallyControlled())
+	{
+		ServerFire();
+	}
+}
+
+
+void AMidProgrammerTestCharacter::ServerFire_Implementation()
+{
+	FVector cameraLocation = FollowCamera->GetComponentLocation();
+	
+	FHitResult hitResult;
+	FVector startPos = cameraLocation;
+	FVector endPos = cameraLocation + FollowCamera->GetComponentRotation().Vector() * 10000.0f;
+
+	GetWorld()->LineTraceSingleByChannel(hitResult, startPos, endPos, ECC_Pawn, {});
+
+	if (hitResult.bBlockingHit && IsValid(hitResult.GetActor()))
+	{
+		FVector hitLocation = hitResult.ImpactPoint;
+		UGameplayStatics::ApplyRadialDamage(this, 30.0f, hitLocation, 200.0f, nullptr, {}, this, Controller);
+		MulticastSpawnExplosion(hitLocation);
+	}
+}
+
+void AMidProgrammerTestCharacter::MulticastSpawnExplosion_Implementation(FVector spawnLocation)
+{
+	UGameplayStatics::SpawnEmitterAtLocation(GetWorld(), ExplosionEffect, spawnLocation, FRotator(0.0, 0.0, 0.0));
+}
